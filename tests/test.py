@@ -19,9 +19,12 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 from src.config import CAT_LOW_COLS, LEAKAGE_COLS, NUM_COLS, TARGET  # noqa: E402
+from src.data_shift import numeric_shift_table  # noqa: E402
 from src.preprocessing import (  # noqa: E402
+    build_baseline_full_pipeline,
     build_full_pipeline,
     prepare_features,
+    prepare_features_baseline,
     split_xy,
     time_or_random_split,
 )
@@ -132,6 +135,25 @@ def test_set_seed_reproducibility():
     np.testing.assert_allclose(p1, p2)
 
 
+def test_prepare_features_baseline_skips_calendar_fe():
+    df = _fake_frame()
+    out = prepare_features_baseline(df)
+    assert "date_month" not in out.columns and "start_date" not in out.columns
+    for col in LEAKAGE_COLS:
+        assert col not in out.columns
+
+
+def test_baseline_pipeline_fit_predict():
+    df = _fake_frame()
+    train_df, val_df, test_df = time_or_random_split(df, val_size=0.2, test_size=0.2)
+    pipe = build_baseline_full_pipeline(LinearRegression())
+    X_train, y_train = split_xy(train_df)
+    X_test, y_test = split_xy(test_df)
+    pipe.fit(X_train, y_train)
+    preds = pipe.predict(X_test)
+    assert preds.shape == y_test.shape
+
+
 def test_time_split_preserves_order_when_date_present():
     df = _fake_frame()
     train_df, val_df, test_df = time_or_random_split(df, val_size=0.2, test_size=0.2)
@@ -147,3 +169,22 @@ def test_all_cat_low_cols_declared_in_schema():
     assert TARGET not in CAT_LOW_COLS
     assert set(CAT_LOW_COLS).isdisjoint(set(NUM_COLS))
     assert set(CAT_LOW_COLS).isdisjoint(set(LEAKAGE_COLS))
+
+
+def test_numeric_shift_table_smoke():
+    df = _fake_frame(120)
+    train_df, _, test_df = time_or_random_split(df, val_size=0.15, test_size=0.15)
+    tbl = numeric_shift_table(train_df, test_df)
+    assert not tbl.empty
+    assert "mean_train" in tbl.columns
+    assert "median_train" in tbl.columns and "delta_median" in tbl.columns
+    assert "abs_delta_mean_over_std_train" in tbl.columns
+
+
+def test_time_order_false_preserves_start_date_and_shuffles():
+    df = _fake_frame(200)
+    t_train, _, _ = time_or_random_split(df.copy())
+    r_train, _, _ = time_or_random_split(df.copy(), time_order=False, seed=0)
+    assert "start_date" in r_train.columns
+    assert t_train["start_date"].is_monotonic_increasing
+    assert not r_train["start_date"].is_monotonic_increasing
