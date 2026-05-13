@@ -7,6 +7,8 @@ Design goals:
 - Drop trivially leaking features (components of the target) up-front in a
   `FunctionTransformer` so no downstream step can accidentally use them.
 - Expose small helpers (`split_xy`, `time_or_random_split`) used by notebooks.
+- Rubric baseline uses :func:`prepare_features_baseline` / :func:`build_baseline_full_pipeline`
+  (no calendar-derived features from ``start_date``).
 """
 
 from __future__ import annotations
@@ -84,6 +86,22 @@ def prepare_features(df: pd.DataFrame) -> pd.DataFrame:
     return out
 
 
+def prepare_features_baseline(df: pd.DataFrame) -> pd.DataFrame:
+    """Minimal prep for rubric baseline: leakage removal + boolean casts only.
+
+    Deliberately skips calendar feature engineering from ``start_date`` (those are
+    produced in :func:`prepare_features`). The raw ``start_date`` column is dropped
+    so the downstream preprocessor does not depend on date-derived columns.
+    Seasonality is still partially captured via existing columns like ``quarter``
+    and ``day_of_week`` from the dataset.
+    """
+    out = _drop_leakage(df)
+    out = _cast_booleans(out)
+    if DATE_COL in out.columns:
+        out = out.drop(columns=[DATE_COL])
+    return out
+
+
 def _ohe() -> OneHotEncoder:
     """OneHotEncoder that is sparse-safe across sklearn versions."""
     try:
@@ -136,6 +154,41 @@ def build_preprocessor(
     )
 
 
+def build_baseline_preprocessor(
+    num_cols: Sequence[str] | None = None,
+    cat_cols: Sequence[str] | None = None,
+    bool_cols: Sequence[str] | None = None,
+) -> ColumnTransformer:
+    """Same as :func:`build_preprocessor` but without the date-derived branch."""
+    num_cols = list(num_cols if num_cols is not None else NUM_COLS)
+    cat_cols = list(cat_cols if cat_cols is not None else CAT_LOW_COLS)
+    bool_cols = list(bool_cols if bool_cols is not None else BOOL_COLS)
+
+    numeric_pipe = Pipeline(
+        steps=[
+            ("imputer", SimpleImputer(strategy="median")),
+            ("scaler", StandardScaler()),
+        ]
+    )
+    categorical_pipe = Pipeline(
+        steps=[
+            ("imputer", SimpleImputer(strategy="constant", fill_value="missing")),
+            ("ohe", _ohe()),
+        ]
+    )
+    bool_pipe = SimpleImputer(strategy="most_frequent")
+
+    return ColumnTransformer(
+        transformers=[
+            ("num", numeric_pipe, num_cols),
+            ("cat", categorical_pipe, cat_cols),
+            ("bool", bool_pipe, bool_cols),
+        ],
+        remainder="drop",
+        verbose_feature_names_out=False,
+    )
+
+
 def build_full_pipeline(estimator) -> Pipeline:
     """End-to-end transformer: raw DataFrame -> engineered features -> preprocessor -> estimator."""
     from sklearn.preprocessing import FunctionTransformer
@@ -149,21 +202,39 @@ def build_full_pipeline(estimator) -> Pipeline:
     )
 
 
+def build_baseline_full_pipeline(estimator) -> Pipeline:
+    """Pipeline for rubric baseline: minimal feature prep + preprocessor + estimator."""
+    from sklearn.preprocessing import FunctionTransformer
+
+    return Pipeline(
+        steps=[
+            ("prep", FunctionTransformer(prepare_features_baseline, validate=False)),
+            ("features", build_baseline_preprocessor()),
+            ("model", estimator),
+        ]
+    )
+
+
 def time_or_random_split(
     df: pd.DataFrame,
     val_size: float = 0.15,
     test_size: float = 0.15,
     seed: int = SEED,
+    *,
+    time_order: bool = True,
 ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     """Return (train, val, test). Use a time-based split if `start_date` is present, random otherwise.
 
     A time split keeps val/test after train in calendar order, which prevents the model
     from "seeing the future" during training.
+
+    Set ``time_order=False`` to shuffle rows (70/15/15) even when ``start_date`` exists — useful for
+    ablations; calendar features from ``start_date`` remain available in every fold row.
     """
     df = df.copy()
     n = len(df)
 
-    if DATE_COL in df.columns and df[DATE_COL].notna().any():
+    if time_order and DATE_COL in df.columns and df[DATE_COL].notna().any():
         df = df.sort_values(DATE_COL).reset_index(drop=True)
         n_test = int(round(n * test_size))
         n_val = int(round(n * val_size))
