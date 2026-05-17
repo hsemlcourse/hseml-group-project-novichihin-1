@@ -1,7 +1,7 @@
 # Core (CP2: закреплённые версии для воспроизводимости)
 numpy==1.26.4
 pandas==2.2.2
-scikit-learn==1.4.2
+scikit-learn==1.6.1
 scipy==1.13.1
 
 # Boosting (в Docker/Linux; на macOS без OpenMP ноутбук 04 использует fallback sklearn)
@@ -26,6 +26,15 @@ ruff==0.4.10
 flake8>=6.1.0
 pytest==8.2.2
 
+# API / Deploy (CP3)
+fastapi==0.115.12
+uvicorn[standard]==0.34.2
+pydantic==2.11.3
+requests==2.32.3
+httpx==0.28.1
+streamlit==1.44.1
+
 # Utilities
 joblib==1.4.2
 python-dotenv==1.0.1
+eval_type_backport>=0.2.0

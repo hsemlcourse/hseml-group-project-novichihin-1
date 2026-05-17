@@ -16,6 +16,8 @@ REPORT_IMAGES_DIR: Path = REPORT_DIR / "images"
 
 SEED: int = 42
 
+MODEL_PATH: Path = MODELS_DIR / "final_cp2.joblib"
+
 KAGGLE_DATASET: str = "juniornsa/digital-advertising-campaign-performance-dataset"
 RAW_CSV_NAME: str = "tech_advertising_campaigns_dataset.csv"
 

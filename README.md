@@ -9,10 +9,12 @@
 1. [Описание задачи](#описание-задачи)
 2. [Структура репозитория](#структура-репозитория)
 3. [Быстрый старт](#быстрый-старт)
-4. [Docker (CP2)](#docker-cp2)
-5. [Данные](#данные)
-6. [Результаты](#результаты)
-7. [Отчёт](#отчёт)
+4. [Docker](#docker)
+5. [Деплой (CP3)](#деплой-cp3)
+6. [Публичный деплой](#публичный-деплой)
+7. [Данные](#данные)
+8. [Результаты](#результаты)
+9. [Отчёт](#отчёт)
 
 ## Описание задачи
 
@@ -31,30 +33,38 @@
 ```
 .
 ├── data/
-│   ├── processed/              # Очищенные и обработанные данные
-│   └── raw/                    # Сырые данные (CSV в .gitignore)
-├── models/                     # Сохранённые модели
+│   ├── processed/                # Очищенные и обработанные данные
+│   └── raw/                      # Сырые данные (CSV в .gitignore)
+├── models/
+│   └── final_cp2.joblib          # Финальная модель (GradientBoostingRegressor)
 ├── notebooks/
-│   ├── 01_eda.ipynb             # Разведочный анализ
-│   ├── 02_baseline.ipynb      # Baseline без календарного FE (Dummy, LinearRegression)
+│   ├── 01_eda.ipynb              # Разведочный анализ
+│   ├── 02_baseline.ipynb         # Baseline без календарного FE
 │   ├── 03_experiments_cp1.ipynb  # Ridge, Lasso, KNN, RandomForest
-│   └── 04_experiments_cp2.ipynb  # CP2: бустинг, RandomizedSearchCV, Stacking, PCA
+│   └── 04_experiments_cp2.ipynb  # Бустинг, RandomizedSearchCV, Stacking, PCA
+├── src/
+│   ├── api/                      # FastAPI-сервис (CP3)
+│   │   ├── main.py               # Приложение, эндпоинты
+│   │   ├── schemas.py            # Pydantic-модели запросов/ответов
+│   │   └── service.py            # Загрузка модели и предсказания
+│   ├── ui/                       # Streamlit UI (CP3)
+│   │   └── app.py                # Веб-интерфейс
+│   ├── config.py                 # SEED, пути, схема колонок, LEAKAGE_COLS
+│   ├── data_loader.py            # Kaggle API + fallback публичной загрузки
+│   ├── preprocessing.py          # Pipeline препроцессинга + сплит
+│   ├── modeling.py               # Обёртки fit/evaluate, CV
+│   └── utils.py                  # set_seed, метрики
+├── tests/
+│   ├── test.py                   # Smoke-тесты пайплайна
+│   └── test_api.py               # Тесты API (CP3)
+├── report/
+│   ├── images/                   # Графики и таблицы для отчёта
+│   └── report.md                 # Финальный отчёт
+├── presentation/                 # Презентация
 ├── Dockerfile
 ├── docker-compose.yml
-├── presentation/               # Презентация (CP3)
-├── report/
-│   ├── images/                 # Графики и таблицы для отчёта
-│   └── report.md               # Финальный отчёт
-├── src/
-│   ├── config.py               # SEED, пути, схема колонок, LEAKAGE_COLS
-│   ├── data_loader.py          # Kaggle API + fallback публичной загрузки
-│   ├── preprocessing.py        # Pipeline препроцессинга + сплит
-│   ├── modeling.py             # Обёртки fit/evaluate, CV
-│   └── utils.py                # set_seed, метрики
-├── tests/
-│   └── test.py                 # Smoke-тесты пайплайна
-├── .github/workflows/ci.yml    # CI: ruff (src/) + pytest
-├── pyproject.toml              # Конфиг pytest / ruff
+├── .github/workflows/ci.yml      # CI: ruff (src/) + pytest
+├── pyproject.toml                # Конфиг pytest / ruff
 ├── requirements.txt
 └── README.md
 ```
@@ -104,26 +114,140 @@ done
 
 После прогона [`notebooks/04_experiments_cp2.ipynb`](notebooks/04_experiments_cp2.ipynb) обновляются, в частности: [`report/images/cp2_experiments.csv`](report/images/cp2_experiments.csv), [`permutation_importance_cp2.csv`](report/images/permutation_importance_cp2.csv), [`permutation_importance_cp2.png`](report/images/permutation_importance_cp2.png), [`train_test_shift_cp2.csv`](report/images/train_test_shift_cp2.csv), [`train_test_shift_cp2.png`](report/images/train_test_shift_cp2.png), [`split_ablation_cp2.csv`](report/images/split_ablation_cp2.csv), [`pca_sweep_cp2.csv`](report/images/pca_sweep_cp2.csv), графики PCA (`report/images/pca_*_cp2.png`) и [`models/final_cp2.joblib`](models/final_cp2.joblib) (при необходимости коммитится для сдачи).
 
-## Docker (CP2) и эталонный прогон
+## Docker
 
-Образ **Linux** (`python:3.10-slim` + `libgomp1` для LightGBM). В контейнере обычно успешно импортируются **LightGBM** и **XGBoost** из `requirements.txt`. На **macOS** локально LightGBM часто недоступен (OpenMP); ноутбук [`04_experiments_cp2.ipynb`](notebooks/04_experiments_cp2.ipynb) тогда использует **HistGradientBoostingRegressor** / **GradientBoostingRegressor** из sklearn — это **другой численный прогон**, но тот же протокол сплита и таблицы метрик.
-
-| Окружение | Что ожидать в первой ячейке ноутбука | Таблица `cp2_experiments.csv` |
-|-----------|--------------------------------------|-------------------------------|
-| `docker compose run ... papermill` / Linux venv с LGBM+XGB | `HAS_LGBM=True`, `HAS_XGB=True` | Модели LightGBM / XGBoost в exp02/exp03 |
-| Локально macOS / без библиотек | фоллбек sklearn (как в закоммиченном CSV сейчас) | HistGradient / GradBoost в названиях строк |
-
-Чтобы получить **эталонный прогон с LightGBM и XGBoost**, воспроизводите CP2 в Docker:
+Образ **Linux** (`python:3.10-slim` + `libgomp1` для LightGBM). В CP3 `docker-compose.yml` определяет два сервиса: `api` (FastAPI) и `ui` (Streamlit).
 
 ```bash
-docker compose build
-docker compose run --rm app pytest -q
-docker compose run --rm app ruff check src/ --line-length 120
-# при смонтированном каталоге и наличии data/raw CSV:
-docker compose run --rm app papermill notebooks/04_experiments_cp2.ipynb notebooks/04_experiments_cp2.ipynb --kernel python3
+# Собрать и запустить всё одной командой
+docker compose up --build
+
+# Тесты и линтер в контейнере
+docker compose run --rm api pytest -q
+docker compose run --rm api ruff check src/ --line-length 120
 ```
 
-Локально (без Docker) команды те же, что в разделе «Быстрый старт»; сравнивайте числа только при **одинаковом** наборе библиотек.
+## Деплой (CP3)
+
+### Запуск
+
+```bash
+docker compose up --build
+```
+
+- **FastAPI (Swagger):** [http://localhost:8000/docs](http://localhost:8000/docs)
+- **Streamlit UI:** [http://localhost:8501](http://localhost:8501)
+
+Без Docker:
+
+```bash
+# Терминал 1 — API
+uvicorn src.api.main:app --host 0.0.0.0 --port 8000
+
+# Терминал 2 — UI
+API_URL=http://localhost:8000 streamlit run src/ui/app.py --server.port 8501
+```
+
+### API-эндпоинты
+
+| Метод | Путь | Описание |
+|-------|------|----------|
+| GET | `/health` | Проверка живости |
+| GET | `/model` | Метаданные модели (версия, RMSE, R²) |
+| POST | `/predict` | Предсказание для одной кампании |
+| POST | `/predict_batch` | Предсказание для нескольких кампаний |
+
+### Пример запроса
+
+```bash
+curl -X POST http://localhost:8000/predict \
+  -H "Content-Type: application/json" \
+  -d '{
+    "start_date": "2024-06-15",
+    "campaign_objective": "Lead Generation",
+    "platform": "Facebook",
+    "ad_placement": "Feed",
+    "device_type": "Mobile",
+    "operating_system": "Android",
+    "creative_format": "Image",
+    "creative_size": "300x250",
+    "ad_copy_length": "Medium",
+    "creative_emotion": "Curiosity",
+    "target_audience_age": "25-34",
+    "target_audience_gender": "Male",
+    "audience_interest_category": "Shoppers",
+    "income_bracket": "$50K-$100K",
+    "purchase_intent_score": "Medium",
+    "day_of_week": "Monday",
+    "industry_vertical": "E-commerce",
+    "budget_tier": "Medium",
+    "has_call_to_action": true,
+    "retargeting_flag": false,
+    "creative_age_days": 30,
+    "quarter": 2,
+    "hour_of_day": 14,
+    "campaign_day": 10,
+    "quality_score": 7,
+    "impressions": 50000,
+    "clicks": 500,
+    "conversions": 20,
+    "bounce_rate": 45.0,
+    "avg_session_duration_seconds": 120.0,
+    "pages_per_session": 3.5,
+    "CTR": 1.0,
+    "conversion_rate": 4.0
+  }'
+```
+
+**Ответ:**
+
+```json
+{"profit_prediction": 2771.54}
+```
+
+### Python-клиент
+
+```python
+import requests
+
+payload = {
+    "start_date": "2024-06-15",
+    "platform": "Facebook",
+    # ... (остальные поля)
+}
+resp = requests.post("http://localhost:8000/predict", json=payload)
+print(resp.json()["profit_prediction"])
+```
+
+## Публичный деплой
+
+Помимо локального `docker compose`, проект задеплоен на двух бесплатных платформах. Они независимы — Streamlit (HF) обращается к FastAPI (Render) через публичный HTTPS, между ними настроен CORS.
+
+| Платформа | Что хостит | Файл-конфиг | Публичный URL |
+|-----------|-----------|-------------|---------------|
+| **Render** | FastAPI (`/health`, `/model`, `/predict`, `/predict_batch`) | [render.yaml](render.yaml) | `https://<service>.onrender.com` |
+| **Hugging Face Spaces** | Streamlit UI | [deploy/hf-space/](deploy/hf-space/) | `https://huggingface.co/spaces/<owner>/ad-profit-predictor` |
+
+### Render (FastAPI)
+
+1. Запушить ветку `cp3` в GitHub.
+2. <https://dashboard.render.com> → **New → Blueprint** → подключить репозиторий.
+3. Render найдёт [render.yaml](render.yaml) и развернёт сервис `ad-profit-api`.
+4. Healthcheck по пути `/health`. Free plan: 512 MB RAM, засыпает после 15 мин неактивности, cold start ~30 с.
+5. Проверка:
+   ```bash
+   curl https://<service>.onrender.com/health
+   curl -X POST https://<service>.onrender.com/predict -H "Content-Type: application/json" -d '{...}'
+   ```
+
+### Hugging Face Spaces (Streamlit)
+
+Полная инструкция: [deploy/hf-space/DEPLOY.md](deploy/hf-space/DEPLOY.md). Кратко:
+
+1. <https://huggingface.co/new-space> → SDK **Streamlit** → создать.
+2. Загрузить `deploy/hf-space/{app.py, requirements.txt, README.md}` в репозиторий Space.
+3. В **Settings → Variables** задать `API_URL = https://<service>.onrender.com`.
+4. Открыть `https://huggingface.co/spaces/<owner>/ad-profit-predictor`.
 
 ## Данные
 

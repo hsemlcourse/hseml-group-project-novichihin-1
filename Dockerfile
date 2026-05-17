@@ -1,5 +1,9 @@
-# Воспроизводимая среда (CP2): Python 3.10 как в CI, OpenMP для LightGBM
 FROM python:3.10-slim-bookworm
+
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PIP_NO_CACHE_DIR=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends libgomp1 \
@@ -8,9 +12,8 @@ RUN apt-get update \
 WORKDIR /work
 
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install -r requirements.txt
 
 COPY . .
 
-# По умолчанию прогон тестов; для ноутбука: docker compose run --rm app papermill ...
-CMD ["pytest", "-q"]
+EXPOSE 8000 8501

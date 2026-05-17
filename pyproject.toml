@@ -3,6 +3,11 @@ minversion = "7.0"
 testpaths = ["tests"]
 python_files = ["test*.py"]
 addopts = "-ra -q"
+filterwarnings = [
+    "ignore::sklearn.exceptions.InconsistentVersionWarning",
+    "ignore::DeprecationWarning:matplotlib.*",
+    "ignore::DeprecationWarning:pyparsing.*",
+]
 
 [tool.ruff]
 line-length = 120

@@ -231,7 +231,151 @@ revenue, ad_spend, ROAS, CPA, CPC, actual_cpc
 
 ## 7. Деплой
 
-Будет реализовано на CP3 (`fastapi` + опциональный Streamlit/Telegram-бот).
+### 7.1 Архитектура
+
+Деплой состоит из двух сервисов, запускаемых через `docker compose`:
+
+```
+┌────────────────┐       POST /predict       ┌──────────────────┐
+│  Streamlit UI  │ ────────────────────────── │   FastAPI :8000   │
+│   :8501        │       JSON response        │                  │
+└────────────────┘                            │  joblib.load()   │
+                                              │  final_cp2.joblib│
+      curl / Swagger /docs  ──────────────── │  Pipeline:       │
+                                              │   prep → OHE →   │
+                                              │   GBR            │
+                                              └──────────────────┘
+```
+
+Препроцессинг (удаление leakage-колонок, календарные фичи из `start_date`, OHE, масштабирование) **не дублируется** — всё уже внутри сохранённого `Pipeline` (`FunctionTransformer(prepare_features) → ColumnTransformer → GradientBoostingRegressor`). Streamlit обращается к FastAPI **по HTTP** и не загружает модель сам.
+
+**Leakage-колонки (`revenue`, `ad_spend`, `ROAS`, `CPA`, `CPC`, `actual_cpc`) в API не запрашиваются** — они исключены из Pydantic-схемы, поскольку реконструируют таргет.
+
+### 7.2 Запуск
+
+```bash
+docker compose up --build
+```
+
+После запуска:
+
+- FastAPI (Swagger): [http://localhost:8000/docs](http://localhost:8000/docs)
+- Streamlit UI: [http://localhost:8501](http://localhost:8501)
+
+Без Docker:
+
+```bash
+# Терминал 1 — API
+uvicorn src.api.main:app --host 0.0.0.0 --port 8000
+
+# Терминал 2 — UI
+API_URL=http://localhost:8000 streamlit run src/ui/app.py --server.port 8501
+```
+
+### 7.3 Эндпоинты API
+
+| Метод | Путь | Тело запроса | Ответ |
+|-------|------|-------------|-------|
+| GET | `/health` | — | `{"status": "ok"}` |
+| GET | `/model` | — | Метаданные: модель, sklearn версия, SEED, val/test RMSE |
+| POST | `/predict` | `CampaignFeatures` (JSON) | `{"profit_prediction": float}` |
+| POST | `/predict_batch` | `list[CampaignFeatures]` (JSON) | `{"predictions": [float, ...]}` |
+
+### 7.4 Пример запроса
+
+**curl:**
+
+```bash
+curl -X POST http://localhost:8000/predict \
+  -H "Content-Type: application/json" \
+  -d '{
+    "start_date": "2024-06-15",
+    "campaign_objective": "Lead Generation",
+    "platform": "Facebook",
+    "ad_placement": "Feed",
+    "device_type": "Mobile",
+    "operating_system": "Android",
+    "creative_format": "Image",
+    "creative_size": "300x250",
+    "ad_copy_length": "Medium",
+    "creative_emotion": "Curiosity",
+    "target_audience_age": "25-34",
+    "target_audience_gender": "Male",
+    "audience_interest_category": "Shoppers",
+    "income_bracket": "$50K-$100K",
+    "purchase_intent_score": "Medium",
+    "day_of_week": "Monday",
+    "industry_vertical": "E-commerce",
+    "budget_tier": "Medium",
+    "has_call_to_action": true,
+    "retargeting_flag": false,
+    "creative_age_days": 30,
+    "quarter": 2,
+    "hour_of_day": 14,
+    "campaign_day": 10,
+    "quality_score": 7,
+    "impressions": 50000,
+    "clicks": 500,
+    "conversions": 20,
+    "bounce_rate": 45.0,
+    "avg_session_duration_seconds": 120.0,
+    "pages_per_session": 3.5,
+    "CTR": 1.0,
+    "conversion_rate": 4.0
+  }'
+```
+
+**Python:**
+
+```python
+import requests
+
+resp = requests.post("http://localhost:8000/predict", json={...})
+print(resp.json())  # {"profit_prediction": 2771.54}
+```
+
+### 7.5 Публичный деплой
+
+В дополнение к локальному `docker compose` оба сервиса задеплоены на бесплатных PaaS-платформах. Это позволяет проверить `/health` и `/predict` снаружи без локальной среды.
+
+| Платформа | Что хостит | Конфиг | Публичный URL |
+|-----------|-----------|--------|---------------|
+| **Render** | FastAPI | [render.yaml](../render.yaml) | `https://<service>.onrender.com` |
+| **Hugging Face Spaces** | Streamlit UI | [deploy/hf-space/](../deploy/hf-space/) | `https://huggingface.co/spaces/<owner>/ad-profit-predictor` |
+
+**Render — FastAPI backend.** Используется механизм **Blueprint**: в корне репозитория лежит [`render.yaml`](../render.yaml), описывающий веб-сервис (Python 3.10, plan `free`, регион Frankfurt, `buildCommand = pip install -r requirements.txt`, `startCommand = uvicorn src.api.main:app --host 0.0.0.0 --port $PORT`, healthcheck по `/health`). Артефакт модели `models/final_cp2.joblib` (272 КБ) закоммичен в git и подтягивается вместе с кодом. На free-плане сервис засыпает после 15 минут неактивности и стартует за ~30 секунд при первом запросе.
+
+**Hugging Face Spaces — Streamlit UI.** Space создан как отдельный git-репозиторий с тремя файлами из `deploy/hf-space/` (`app.py`, `requirements.txt`, `README.md` с обязательным YAML frontmatter `sdk: streamlit`). Адрес API передаётся через переменную окружения `API_URL`, которая задаётся в **Settings → Variables**. При нажатии **Predict profit** Streamlit делает `POST {API_URL}/predict` и отображает результат.
+
+**CORS.** В FastAPI добавлен `CORSMiddleware` (`allow_origins=["*"]`), чтобы любой публичный фронт (HF Spaces, браузерные fetch, Postman) мог обращаться к API.
+
+**Проверка снаружи:**
+
+```bash
+# health
+curl https://<service>.onrender.com/health
+# → {"status":"ok"}
+
+# predict
+curl -X POST https://<service>.onrender.com/predict \
+  -H "Content-Type: application/json" \
+  -d @sample_payload.json
+# → {"profit_prediction": 2771.54}
+```
+
+### 7.6 Скриншоты
+
+*(Скриншоты будут добавлены после запуска сервисов: `report/images/api_swagger.png`, `report/images/api_predict_response.png`, `report/images/streamlit_ui.png`, `report/images/hf_space.png`, `report/images/render_dashboard.png`)*
+
+### 7.7 Видео-демо
+
+*(Ссылка на видео будет добавлена после записи. Сценарий: запуск `docker compose up` → Swagger /docs → curl /predict → Streamlit UI → публичный URL HF Space → curl на Render-сервис.)*
+
+### 7.8 Известные ограничения
+
+- **Covariate shift.** Модель обучена на time-based split: test-период попадает в «другой» сезон, из-за чего val RMSE (26 778) заметно лучше test RMSE (64 019). На новых данных из далёкого будущего ошибка может быть выше.
+- **Неизвестные категории.** `OneHotEncoder(handle_unknown="ignore")` корректно обработает новые значения категориальных признаков — они будут закодированы нулями. Предсказание не упадёт, но может быть менее точным.
+- **Модель не переобучается на новых данных** в текущей версии API — используется фиксированный артефакт `models/final_cp2.joblib`.
 
 ---
 
@@ -241,5 +385,7 @@ revenue, ad_spend, ROAS, CPA, CPC, actual_cpc
 - Обоснованно выбрана метрика RMSE (MAE/R² — вспомогательные). Логарифмические метрики не применимы из-за отрицательных значений `profit`.
 - Построен воспроизводимый пайплайн обработки данных (sklearn Pipeline + time-based split), закрывающий ключевые каналы утечек; добавлен отдельный baseline-пайплайн без календарного feature engineering.
 - CP1: RandomForest — сильнейшая модель среди Ridge/Lasso/KNN/Linear baseline.
-- CP2: полный цикл бустинга (LightGBM/XGBoost или sklearn-аналоги), `RandomizedSearchCV`, Stacking, PCA; финальная модель по val — **GradientBoostingRegressor** (прогон с sklearn), дообучение и артефакты — в `notebooks/04_experiments_cp2.ipynb` и `report/images/cp2_experiments.csv`; интерпретация финальной модели — [`permutation_importance_cp2.csv`](images/permutation_importance_cp2.csv); диагностика сдвига train/test — [`train_test_shift_cp2.csv`](images/train_test_shift_cp2.csv).
-- Следующий шаг (CP3): деплой (`fastapi`) и оформление отчёта в PDF.
+- CP2: полный цикл бустинга (LightGBM/XGBoost или sklearn-аналоги), `RandomizedSearchCV`, Stacking, PCA; финальная модель по val — **GradientBoostingRegressor** (sklearn), test RMSE **64 019**, R² **0.733**.
+- Интерпретация: permutation importance показала, что `conversions`, `industry_vertical` и `income_bracket` — ключевые драйверы предсказания. Это согласуется с бизнес-логикой: объём конверсий напрямую связан с выручкой, а отрасль и уровень дохода аудитории определяют маржинальность.
+- CP3: реализован деплой — FastAPI-сервис (`/predict`, `/predict_batch`) + Streamlit UI + Docker Compose; модель загружается один раз при старте, leakage-колонки исключены из API-схемы. Дополнительно: публичный деплой FastAPI на Render (`render.yaml`) и Streamlit UI на Hugging Face Spaces (`deploy/hf-space/`) — оба сервиса доступны снаружи по HTTPS.
+- **Что можно улучшить:** добавить квантильную регрессию для оценки неопределённости предсказания; использовать монотонные ограничения в бустинге (`conversions ↑ → profit ↑`); реализовать переобучение модели на новых данных через отдельный эндпоинт; добавить мониторинг data drift в production.

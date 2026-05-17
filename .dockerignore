@@ -1,0 +1,47 @@
+# Python virtual envs (the heaviest item — was 891 MB in build context)
+.venv/
+venv/
+env/
+
+# Git
+.git/
+.gitignore
+.gitattributes
+
+# Caches
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Raw / processed data (mounted as volume in docker-compose)
+data/raw/
+data/processed/
+
+# Editor / OS
+.DS_Store
+.vscode/
+.idea/
+.cursor/
+
+# CI / GH
+.github/
+
+# Local builds and outputs
+build/
+dist/
+*.egg-info/
+
+# Docker meta itself
+Dockerfile
+docker-compose.yml
+.dockerignore
+
+# Plans / agent transcripts (irrelevant for runtime)
+plans/

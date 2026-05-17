@@ -1,0 +1,27 @@
+# Render Blueprint — one-click deploy for the FastAPI service.
+#
+# Usage:
+#   1. Push the cp3 branch to GitHub.
+#   2. Go to https://dashboard.render.com → New → Blueprint → connect this repo.
+#   3. Render picks up this file, builds and deploys the `ad-profit-api` service.
+#   4. The public URL will be https://ad-profit-api-<random>.onrender.com
+#
+# Free plan: 512 MB RAM, 0.1 CPU. The service spins down after 15 min of
+# inactivity and cold-starts in ~30 s on the next request.
+services:
+  - type: web
+    name: ad-profit-api
+    runtime: python
+    region: frankfurt
+    plan: free
+    branch: cp3
+    pythonVersion: "3.10"
+    buildCommand: pip install --upgrade pip && pip install -r requirements.txt
+    startCommand: uvicorn src.api.main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /health
+    autoDeploy: true
+    envVars:
+      - key: PYTHONUNBUFFERED
+        value: "1"
+      - key: PYTHONDONTWRITEBYTECODE
+        value: "1"
