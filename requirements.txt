@@ -1,5 +1,8 @@
 # Core (CP2: закреплённые версии для воспроизводимости)
-numpy==1.26.4
+# numpy==2.0.2 — соответствует среде, где сохранён models/final_cp2.joblib.
+# С numpy 1.26.x загрузка падает: "MT19937 is not a known BitGenerator" — между
+# numpy 1.26 и 2.0 поменялся внутренний путь к BitGenerator-классам.
+numpy==2.0.2
 pandas==2.2.2
 scikit-learn==1.6.1
 scipy==1.13.1
@@ -35,6 +38,7 @@ httpx==0.28.1
 streamlit==1.44.1
 
 # Utilities
-joblib==1.4.2
+# joblib==1.5.3 — соответствует версии, которой сохранён артефакт модели.
+joblib==1.5.3
 python-dotenv==1.0.1
 eval_type_backport>=0.2.0
